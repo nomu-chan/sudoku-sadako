@@ -132,6 +132,7 @@ class Board {
         }
     }
 
+    // Solver: Isolated Candidate Removal
     fun solveBoardL2() {
         val solve = Solver(this)
 
@@ -157,6 +158,56 @@ class Board {
 
             if (changes == 0) noChangesInBoard++
             else noChangesInBoard--
+
+            isGridCompleted()
+        }
+
+        val mark2 = timeSource.markNow()
+        val elapsed = mark2 - mark1
+        println("$elapsed")
+        when {
+            end == 1 -> println("complete")
+            end == -1 -> println("error")
+            else -> println("incomplete")
+        }
+    }
+
+    // Solver: Candidate Removal from Grouped Candidate
+    /*
+        e.g. tiles with candidates (2, 5) (2, 5), (2, 5, 6, 7), (2, 5, 6, 7).
+        The latter 2 tiles will become (6, 7)
+     */
+    /*
+        TODO: track changes for grouped candidate elimination
+     */
+    fun solveBoardL3() {
+        val solve = Solver(this)
+
+        // time tracking
+        val timeSource = TimeSource.Monotonic
+        val mark1 = timeSource.markNow()
+
+        // repeated iteration tracking
+        var noChangesInBoard = 0
+        var changes = 0
+
+        solve.candidateFill()
+        printGridCandidates() // test
+        println("--") // test
+        println("loop starts")
+        println("--")
+
+        while(end == 0 && noChangesInBoard != 1) {
+            changes = 0
+            changes += solve.checkIsolatedCandidates()
+            printGridCandidates() // test
+            println("--") // test
+
+            if (changes == 0) {
+                solve.checkGroupedCandidates()
+                changes += solve.checkIsolatedCandidates()
+                if (changes == 0) noChangesInBoard++
+            }
 
             isGridCompleted()
         }
