@@ -177,9 +177,6 @@ class Board {
         e.g. tiles with candidates (2, 5) (2, 5), (2, 5, 6, 7), (2, 5, 6, 7).
         The latter 2 tiles will become (6, 7)
      */
-    /*
-        TODO: track changes for grouped candidate elimination
-     */
     fun solveBoardL3() {
         val solve = Solver(this)
 
@@ -208,6 +205,66 @@ class Board {
                 changes += solve.checkIsolatedCandidates()
                 if (changes == 0) noChangesInBoard++
             }
+
+            isGridCompleted()
+        }
+
+        val mark2 = timeSource.markNow()
+        val elapsed = mark2 - mark1
+        println("$elapsed")
+        when {
+            end == 1 -> println("complete")
+            end == -1 -> println("error")
+            else -> println("incomplete")
+        }
+    }
+
+    /*
+        TODO: in-box candidate row/col elimination and vice-versa
+            e.g.
+            col     1      2       3
+            ----------------------------
+                (1, 2, 3)  X   (1, 2, 4)
+                     X     X   (1, 2, 3, 4)
+                (1, 2, 3)  X      X
+            -
+            all other candidates that are 4 will be removed in column 3
+     */
+    fun solveBoardL4() {
+        val solve = Solver(this)
+
+        // time tracking
+        val timeSource = TimeSource.Monotonic; val mark1 = timeSource.markNow()
+
+        // repeated iteration tracking
+        var noChangesInBoard = 0; var changes = 0
+
+        solve.candidateFill()
+        printGridCandidates() // test
+        println("--") // test
+        println("loop starts")
+        println("--")
+
+        while(end == 0 && noChangesInBoard != 1) {
+            changes = 0
+            changes += solve.checkIsolatedCandidates()
+            printGridCandidates() // test
+
+            if (changes == 0) {
+                solve.checkGroupedCandidates()
+                changes += solve.checkIsolatedCandidates()
+                println("Changes1: $changes")
+                if (changes == 0) {
+                    changes += solve.L4Elimination()
+                    println("Changes2: $changes") // test
+                    changes += solve.checkGroupedCandidates()
+                    println("Changes3: $changes")
+                    changes += solve.checkIsolatedCandidates()
+                    println("Changes4: $changes")
+                }
+                if (changes == 0) noChangesInBoard++
+            }
+            println("--") // test
 
             isGridCompleted()
         }
