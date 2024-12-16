@@ -2,7 +2,7 @@ fun main(args: Array<String>) {
     val grid = Board()
 
     // input puzzle txt file
-    grid.setTiles()
+    grid.setUpTiles()
     grid.printGrid()
 
     println("--")

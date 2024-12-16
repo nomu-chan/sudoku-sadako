@@ -1,8 +1,6 @@
 import java.io.File
 import java.io.FileNotFoundException
 import kotlin.time.*
-import java.io.IOException
-import java.io.InputStream
 
 /*
     Stores the board
@@ -12,6 +10,17 @@ class Board {
     val grid = MutableList(9) { row -> MutableList(9) { col -> Tile() } }
     var end = 0
 
+    // initialize board so that tiles include coordinates i, j
+    init {
+        for (i in 0..8) {
+            for (j in 0..8) {
+                grid[i][j].i = i
+                grid[i][j].j = j
+            }
+        }
+
+    }
+
     fun printGrid() {
         for (i in 0..8) {
             for (j in 0..8) {
@@ -20,31 +29,6 @@ class Board {
             println()
         }
     }
-
-    /*
-    fun printGridCandidates() {
-        for (i in 0..8) {
-            for (j in 0..8) {
-                // line spacer
-                if (i > 1 && i % 3 == 1) println("-------------------------------")
-                // tile placement
-                for (k in 0..2) {
-                    if (grid[i][j].tileNum != 0) {
-                        val checkNum : MutableList<Int> = intArrayOf(3 * k, 3 * k + 1, 3 * k + 2).toMutableList()
-                        for (i in checkNum) {
-                            if
-                        }
-                    } else {
-                        print("  ")
-                    }
-                    if (j < 2 && j % 3 == 1) println("| ")
-                }
-
-            }
-        }
-    }
-
-     */
 
     fun printGridCandidates() {
         for (i in 0..8) {
@@ -62,7 +46,7 @@ class Board {
         }
     }
 
-    fun setTiles() {
+    fun setUpTiles() {
         var i : Int
         var file : File? = null
 
@@ -220,7 +204,7 @@ class Board {
     }
 
     /*
-        TODO: in-box candidate row/col elimination and vice-versa
+        in-box candidate row/col elimination and vice-versa
             e.g.
             col     1      2       3
             ----------------------------
@@ -248,22 +232,26 @@ class Board {
         while(end == 0 && noChangesInBoard != 1) {
             changes = 0
             changes += solve.checkIsolatedCandidates()
-            printGridCandidates() // test
+            println("Changes0 (L2): $changes")
 
             if (changes == 0) {
-                solve.checkGroupedCandidates()
+                changes += solve.checkGroupedCandidates()
                 changes += solve.checkIsolatedCandidates()
-                println("Changes1: $changes")
+                println("Changes1 (L3+2): $changes")
                 if (changes == 0) {
-                    changes += solve.L4Elimination()
-                    println("Changes2: $changes") // test
+                    changes += solve.l4Elimination()
+                    println("Changes2 (L4/4): $changes") // test
                     changes += solve.checkGroupedCandidates()
-                    println("Changes3: $changes")
+                    println("Changes3 (L3/4): $changes")
                     changes += solve.checkIsolatedCandidates()
-                    println("Changes4: $changes")
+                    println("Changes4 (L2/4): $changes")
+                    changes += solve.checkSingleCandidates()
+                    println("Changes5 (L1/4): $changes")
                 }
                 if (changes == 0) noChangesInBoard++
             }
+
+            printGridCandidates() // test
             println("--") // test
 
             isGridCompleted()
@@ -277,5 +265,15 @@ class Board {
             end == -1 -> println("error")
             else -> println("incomplete")
         }
+    }
+
+    fun solveBoardL5() {
+        val solve = Solver(this)
+
+        // time tracking
+        val timeSource = TimeSource.Monotonic; val mark1 = timeSource.markNow()
+
+        // repeated iteration tracking
+        var noChangesInBoard = 0; var changes = 0
     }
 }

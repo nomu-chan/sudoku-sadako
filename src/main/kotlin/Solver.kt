@@ -1,22 +1,283 @@
 import jdk.internal.org.jline.reader.Candidate
+import kotlin.collections.set
 
-typealias TileGrid = MutableList<MutableList<Tile>>
 typealias TileList = MutableList<Tile>
 typealias IntList2D = MutableList<MutableList<Int>>
 typealias IntList = MutableList<Int>
 typealias IntSet = MutableSet<Int>
+typealias AnyList2D = MutableList<Any>
 
 class Solver(var board : Board) {
-    val boxCoords : MutableList<MutableList<Int>> = mutableListOf()
 
+    // initialize boxCoords for easier 3x3 box iteration.
+    val boxCoords : IntList2D = mutableListOf()
     init {
         for (i in 0..2)
             for (j in 0..2)
                 boxCoords.add(mutableListOf(i, j))
     }
 
-    // eliminate tile candidates based on nums in row, col and box
-    fun eliminateTileCandidates(i : Int, j : Int) : Int {
+    // Fill the whole grid with candidates
+    fun candidateFill() {
+        for (i in 0..8) {
+            for (j in 0..8) {
+                val candidates : IntList = intArrayOf(1, 2, 3, 4, 5, 6, 7, 8, 9).toMutableList()
+                if (board.grid[i][j].tileNum == 0) board.grid[i][j].candidates = candidates
+                eliminateCandidatesInTile(i, j)
+            }
+        }
+    }
+
+    // L1: Checks the whole board for tiles with single candidates and fills them up
+    fun checkSingleCandidates() : Int {
+        var changes = 0;
+        for (i in 0..8) {
+            for (j in 0..8) {
+                if (board.grid[i][j].tileNum == 0 && board.grid[i][j].candidates.count() == 1) {
+                    val num = board.grid[i][j].candidates.first()
+                    board.grid[i][j].candidates.remove(num)
+                    fillTile(num, i, j)
+                    changes++
+                }
+            }
+        }
+        return changes
+    }
+
+    /*
+         L2 : Checks the whole board for isolated candidates - these are candidates that only
+         have one of itself in either a row, column or 3x3 box. Used in L2.
+
+         @return = number of changes after checking and filling isolated candidates
+     */
+    fun checkIsolatedCandidates() : Int {
+        var changes = 0;
+        // row check
+        for (i in 0..8) {
+            val tileList : TileList = mutableListOf()
+            for (j in 0..8) tileList.add(board.grid[i][j])
+
+            // generate candidate count mapping
+            val candidateMap : MutableMap<Int, Int> = generateCandidateCountMapping(tileList)
+
+            // fill tiles that have isolated candidate
+            changes += fillIsolatedCandidates(candidateMap, tileList)
+        }
+
+        // column check
+        for (j in 0..8) {
+            val tileList : TileList = mutableListOf()
+            for (i in 0..8) tileList.add(board.grid[i][j])
+
+            val candidateMap : MutableMap<Int, Int> = generateCandidateCountMapping(tileList)
+
+            changes += fillIsolatedCandidates(candidateMap, tileList)
+        }
+
+        // box check
+        for (boxCoord in boxCoords) {
+            val box_i = boxCoord[0]; val box_j = boxCoord[1]
+            val tileList : TileList = mutableListOf()
+            for (tile in boxCoords) {
+                val tile_i = tile[0]; val tile_j = tile[1]
+                val i = 3 * box_i + tile_i;  val j = 3 * box_j + tile_j
+                tileList.add(board.grid[i][j])
+            }
+            val candidateMap : MutableMap<Int, Int> = generateCandidateCountMapping(tileList)
+
+            changes += fillIsolatedCandidates(candidateMap, tileList)
+        }
+
+        return changes; // return num of candidate removals
+    }
+
+    /*
+         L3 : Checks each row, column and 3x3 box for any possible candidate subset/groups that
+         will be eliminated from other tiles not part of the candidate subset/group
+
+         e.g. (1, 6, 8, 9), (1, 6), (1, 6) -> first tile will be (8, 9)
+     */
+    fun checkGroupedCandidates() : Int {
+        var changes = 0
+
+        // row check
+        for (i in 0..8) {
+            val tileList : TileList = mutableListOf()
+            for (j in 0..8) tileList.add(board.grid[i][j])
+            val candidateSet = generateCandidateSet(tileList)
+
+            if (candidateSet.size < 4) continue
+
+            // generate all 2 to k - 2 num combis, get valid groups and eliminate candidates accordingly
+            val combinations = generateAllCombinations(candidateSet)
+            changes += eliminateFromCandidateGroups(combinations, tileList)
+        }
+
+        // col check
+        for (j in 0..8) {
+            val tileList : TileList = mutableListOf()
+            for (i in 0..8) tileList.add(board.grid[i][j])
+            val candidateSet = generateCandidateSet(tileList)
+
+            if (candidateSet.size < 4) continue
+
+            // generate all 2 to k - 2 num combis, get valid groups and eliminate candidates accordingly
+            val combinations = generateAllCombinations(candidateSet)
+            changes += eliminateFromCandidateGroups(combinations, tileList)
+        }
+
+        // box check
+        for (boxCoord in boxCoords) {
+            // obtain set of all candidates and set of all tiles with candidates
+            val box_i = boxCoord[0]; val box_j = boxCoord[1]
+            val tileList : TileList = mutableListOf()
+            for (tile in boxCoords) {
+                val tile_i = tile[0]; val tile_j = tile[1]
+                val i = 3 * box_i + tile_i; val j = 3 * box_j + tile_j
+                if (board.grid[i][j].tileNum == 0) {
+                    tileList.add(board.grid[i][j])
+                }
+            }
+            val candidateSet = generateCandidateSet(tileList)
+
+            if (candidateSet.size < 4) continue
+
+            // generate all 2 to k - 2 num combis and attempt to find groups of candidates
+            val combinations = generateAllCombinations(candidateSet)
+            changes += eliminateFromCandidateGroups(combinations, tileList)
+        }
+
+        return changes
+    }
+
+    /*
+        L4 : Pointer Pairs/Trios: Box candidate elimination from row/col alignment and vice versa
+            e.g.
+            col     1      2       3
+            ----------------------------
+                (1, 2, 3)  X   (1, 2, 4)
+                     X     X   (1, 2, 3, 4)
+                (1, 2, 3)  X      X
+            -
+            all other candidates that are 4 will be removed in column 3
+     */
+    fun l4Elimination() : Int {
+        var changes = 0
+
+        // row check
+        for (i in 0..8) {
+            val tileList : TileList = mutableListOf()
+            for (j in 0..8) if (board.grid[i][j].tileNum == 0) tileList.add(board.grid[i][j])
+            val candidateSet : MutableSet<Int> = generateCandidateSet(tileList)
+
+            val boxElim = inSameBox(candidateSet, tileList)
+
+            if (boxElim.isEmpty()) continue
+            for (procedure in boxElim) {
+                val candidate = procedure[0]
+                val box_i = procedure[1]; val box_j = procedure[2]
+                for (boxCoord in boxCoords) {
+                    val ri = boxCoord[0]; val rj = boxCoord[1]
+                    if (3 * box_i + ri == i) continue
+                    if (board.grid[3 * box_i + ri][3 * box_j + rj].candidates.remove(candidate)) changes++
+                }
+            }
+        }
+
+        // col check
+        for (j in 0..8) {
+            val tileList : TileList = mutableListOf()
+            for (i in 0..8) if (board.grid[i][j].tileNum == 0) tileList.add(board.grid[i][j])
+            val candidateSet : MutableSet<Int> = generateCandidateSet(tileList)
+
+            val boxElim = inSameBox(candidateSet, tileList)
+
+            if (boxElim.isEmpty()) continue
+            for (procedure in boxElim) {
+                val candidate = procedure[0]
+                val box_i = procedure[1];  val box_j = procedure[2]
+                for (boxCoord in boxCoords) {
+                    val ri = boxCoord[0]; val rj = boxCoord[1]
+                    if (3 * box_j + rj == j) continue
+                    if (board.grid[3 * box_i + ri][3 * box_j + rj].candidates.remove(candidate)) changes++
+                }
+            }
+        }
+
+        // box check
+        for (boxCoord in boxCoords) {
+            // obtain set of all candidates and set of all tiles with candidates
+            val box_i = boxCoord[0]; val box_j = boxCoord[1]
+
+            val tileList : TileList = mutableListOf()
+            for (tile in boxCoords) {
+                val tile_i = tile[0]; val tile_j = tile[1]
+                val i = 3 * box_i + tile_i;  val j = 3 * box_j + tile_j
+                if (board.grid[i][j].tileNum == 0) tileList.add(board.grid[i][j])
+            }
+
+            val candidateSet: MutableSet<Int> = generateCandidateSet(tileList)
+
+            val rowElim = inSameRow(candidateSet, tileList)
+            val colElim = inSameCol(candidateSet, tileList)
+
+            if (rowElim.isNotEmpty()) {
+                for (r in rowElim) {
+                    val candidate = r[0]
+                    val rowNum = r[1]
+                    for (j in 0..8) {
+                        if (j / 3 == box_j) continue
+                        if (board.grid[rowNum][j].candidates.remove(candidate)) changes++
+                    }
+                }
+            }
+
+            if (colElim.isNotEmpty()) {
+                for (r in colElim) {
+                    val candidate = r[0]
+                    val colNum = r[1]
+                    for (i in 0..8) {
+                        if (i / 3 == box_i) continue
+                        if (board.grid[i][colNum].candidates.remove(candidate)) changes++
+                    }
+                }
+            }
+        }
+
+        return changes
+    }
+
+    /*
+        TODO: L5: Swordfish and Y-Fish
+     */
+    fun l5Elimination(): Int {
+
+        return 0
+    }
+
+    // OPERATIONS
+    // Fill a tile and remove candidates in row, col, and box
+    private fun fillTile(num : Int, i : Int, j : Int) {
+        board.grid[i][j].tileNum = num
+
+        // remove candidates in row/col
+        for (k in 0..8) {
+            board.grid[i][k].candidates.remove(num)
+            board.grid[k][j].candidates.remove(num)
+        }
+
+        // remove candidates in 3x3 box
+        val ibox = i / 3
+        val jbox = j / 3
+        for (k1 in 0..2) {
+            for (k2 in 0..2) {
+                board.grid[3 * ibox + k1][3 * jbox + k2].candidates.remove(num)
+            }
+        }
+    }
+
+    // Eliminate tile candidates based on nums in row, col and box
+    private fun eliminateCandidatesInTile(i : Int, j : Int) : Int {
 
         var numOfCandidatesRemoved = 0
 
@@ -47,442 +308,71 @@ class Solver(var board : Board) {
         return numOfCandidatesRemoved
     }
 
-    // fill a tile and remove candidates in row, col, and box
-    fun fillTile(num : Int, i : Int, j : Int) {
-        board.grid[i][j].tileNum = num
-
-        // remove candidates in row/col
-        for (k in 0..8) {
-            board.grid[i][k].candidates.remove(num)
-            board.grid[k][j].candidates.remove(num)
-        }
-
-        // remove candidates in 3x3 box
-        val ibox = i / 3
-        val jbox = j / 3
-        for (k1 in 0..2) {
-            for (k2 in 0..2) {
-                board.grid[3 * ibox + k1][3 * jbox + k2].candidates.remove(num)
+    // SET/LIST/MAP GENERATION
+    private fun generateCandidateCountMapping(tileList : TileList) : MutableMap<Int, Int> {
+        val candidateCount = mutableMapOf<Int, Int>()
+        for (tile in tileList) {
+            if (tile.tileNum == 0) {
+                for (c in tile.candidates) {
+                    candidateCount[c] = candidateCount.getOrDefault(c, 0) + 1
+                }
             }
         }
+
+        return candidateCount
     }
 
-    // Fill the whole grid with candidates
-    fun candidateFill() {
-        for (i in 0..8) {
-            for (j in 0..8) {
-                val candidates : IntList = intArrayOf(1, 2, 3, 4, 5, 6, 7, 8, 9).toMutableList()
-                if (board.grid[i][j].tileNum == 0) {
-                    board.grid[i][j].candidates = candidates
-                }
-                eliminateTileCandidates(i, j)
-            }
+    private fun generateCandidateSet(tileList : TileList) : MutableSet<Int> {
+        val candidateSet : IntSet = mutableSetOf()
+        for (tile in tileList) {
+            candidateSet.add(tile.tileNum)
         }
+        return candidateSet
     }
 
-    // Checks the whole board for tiles with single candidates and fills them up
-    fun checkSingleCandidates() {
-        for (i in 0..8) {
-            for (j in 0..8) {
-                if (board.grid[i][j].tileNum == 0 && board.grid[i][j].candidates.count() == 1) {
-                    var num = board.grid[i][j].candidates.first()
-                    board.grid[i][j].candidates.remove(num)
-                    fillTile(num, i, j)
-                }
-            }
-        }
-    }
-
-    /*
-         Checks the whole board for isolated candidates - these are candidates that only
-         have one of itself in either a row, column or 3x3 box. Used in L2.
-
-         @return = number of changes after checking and filling isolated candidates
-     */
-    fun checkIsolatedCandidates() : Int {
-        var changes = 0;
-        // row check
-        for (i in 0..8) {
-            val candidateMap : MutableMap<Int, Int> = mutableMapOf()
-            // fill up candidate count in the candidate map
-            for (j in 0..8) {
-                if (board.grid[i][j].tileNum == 0) {
-                    for (k in board.grid[i][j].candidates) {
-                        candidateMap[k] = candidateMap.getOrDefault(k, 0) + 1
-                    }
-                }
-            }
-            // fill tiles that have isolated candidate
-            for (k in candidateMap.keys) {
-                if (candidateMap[k] == 1) {
-                    for (j in 0..8) {
-                        if (board.grid[i][j].candidates.contains(k)) {
-                            board.grid[i][j].candidates.clear()
-                            fillTile(k, i, j)
-                            changes++
-                        }
-                    }
-                }
-            }
-        }
-
-        // column check
-        for (j in 0..8) {
-            val candidateMap : MutableMap<Int, Int> = mutableMapOf()
-            for (i in 0..8) {
-                if (board.grid[i][j].tileNum == 0) {
-                    for (k in board.grid[i][j].candidates) {
-                        candidateMap[k] = candidateMap.getOrDefault(k, 0) + 1
-                    }
-                }
-            }
-            for (k in candidateMap.keys) {
-                if (candidateMap[k] == 1) {
-                    for (i in 0..8) {
-                        if (board.grid[i][j].candidates.contains(k)) {
-                            board.grid[i][j].candidates.clear()
-                            fillTile(k, i, j)
-                            changes++
-                        }
-                    }
-                }
-            }
-        }
-
-        // box check
-        for (boxCoord in boxCoords) {
-            val box_i = boxCoord[0]
-            val box_j = boxCoord[1]
-            val candidateMap : MutableMap<Int, Int> = mutableMapOf()
-            for (tile in boxCoords) {
-                val tile_i = tile[0]
-                val tile_j = tile[1]
-                val i = 3 * box_i + tile_i
-                val j = 3 * box_j + tile_j
-                if (board.grid[i][j].tileNum == 0) {
-                    for (k in board.grid[i][j].candidates) {
-                        candidateMap[k] = candidateMap.getOrDefault(k, 0) + 1
-                    }
-                }
-            }
-            for (k in candidateMap.keys) {
-                if (candidateMap[k] == 1) {
-                    for (tile in boxCoords) {
-                        val tile_i = tile[0]
-                        val tile_j = tile[1]
-                        val i = 3 * box_i + tile_i
-                        val j = 3 * box_j + tile_j
-                        if (board.grid[i][j].candidates.contains(k)) {
-                            board.grid[i][j].candidates.clear()
-                            fillTile(k, i, j)
-                            changes++
-                        }
-                    }
-                }
-            }
-        }
-
-        return changes; // return num of candidate removals
-    }
-
-    /*
-         Checks each row, column and 3x3 box for any possible candidate subset/groups that
-         will be eliminated from other tiles not part of the candidate subset/group
-
-         e.g. (1, 6, 8, 9), (1, 6), (1, 6) -> first tile will be (8, 9)
-     */
-    fun checkGroupedCandidates() : Int {
+    // L2 Utility Functions (Isolated Candidates)
+    private fun fillIsolatedCandidates(candidateMap : MutableMap<Int, Int>, tileList : TileList) : Int {
         var changes = 0
-
-        // row check
-        for (i in 0..8) {
-            val candidateSet : MutableSet<Int> = mutableSetOf()
-            val tileCoordSet : MutableList<MutableList<Int>> = mutableListOf()
-            for (j in 0..8) {
-                if (board.grid[i][j].tileNum == 0) {
-                    tileCoordSet.add(mutableListOf(i, j))
-                    for (k in board.grid[i][j].candidates) {
-                        candidateSet.add(k)
-                    }
-                }
-            }
-            // generate all 2 to k - 2 num combis and attempt to find groups of candidates
-            val combinations = generateAllCombinations(candidateSet)
-            for (combi in combinations) {
-                var tileInGroup = 0
-                val tileInGroupCoordList = mutableListOf<MutableList<Int>>()
-                val xcount = combi.size
-                for (coords in tileCoordSet) {
-                    val i = coords[0]
-                    val j = coords[1]
-                    var k = 1
-                    for (candidate in board.grid[i][j].candidates) {
-                        if (candidate in combi) {}
-                        else k = 0
-                    }
-                    if (k == 1) {
-                        tileInGroup++
-                        tileInGroupCoordList.add(mutableListOf(i, j))
-                    }
-                }
-                // once grouped, get em numby
-                // once grouped successfully, remove grouped candidates from tiles not in the group
-                if (tileInGroup == xcount) {
-                    for (tileCoord in tileCoordSet) {
-                        val i = tileCoord[0]
-                        val j = tileCoord[1]
-                        if (tileCoord in tileInGroupCoordList) {}
-                        else {
-                            for (m in combi) {
-                                if (board.grid[i][j].candidates.remove(m)) changes++
-                            }
-                        }
+        for (k in candidateMap.keys) {
+            if (candidateMap[k] == 1) {
+                for (tile in tileList) {
+                    if (tile.candidates.contains(k)) {
+                        tile.candidates.clear()
+                        fillTile(k, tile.i, tile.j)
+                        changes++
                     }
                 }
             }
         }
-
-        // col check
-        for (j in 0..8) {
-            val candidateSet : MutableSet<Int> = mutableSetOf()
-            val tileCoordSet : MutableList<MutableList<Int>> = mutableListOf()
-            for (i in 0..8) {
-                if (board.grid[i][j].tileNum == 0) {
-                    tileCoordSet.add(mutableListOf(i, j))
-                    for (k in board.grid[i][j].candidates) {
-                        candidateSet.add(k)
-                    }
-                }
-            }
-            // generate all 2 to k - 2 num combis and attempt to find groups of candidates
-            val combinations = generateAllCombinations(candidateSet)
-            for (combi in combinations) {
-                var tileInGroup = 0
-                val tileInGroupCoordList = mutableListOf<MutableList<Int>>()
-                val xcount = combi.size
-                for (coords in tileCoordSet) {
-                    val i = coords[0]
-                    val j = coords[1]
-                    var k = 1
-                    for (candidate in board.grid[i][j].candidates) {
-                        if (candidate in combi) {}
-                        else k = 0
-                    }
-                    if (k == 1) {
-                        tileInGroup++
-                        tileInGroupCoordList.add(mutableListOf(i, j))
-                    }
-                }
-                // once grouped, get em numby
-                // once grouped successfully, remove grouped candidates from tiles not in the group
-                if (tileInGroup == xcount) {
-                    for (tileCoord in tileCoordSet) {
-                        val i = tileCoord[0]
-                        val j = tileCoord[1]
-                        if (tileCoord in tileInGroupCoordList) {}
-                        else {
-                            for (m in combi) {
-                                if (board.grid[i][j].candidates.remove(m)) changes++
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // box check
-        for (boxCoord in boxCoords) {
-            // obtain set of all candidates and set of all tiles with candidates
-            val box_i = boxCoord[0]
-            val box_j = boxCoord[1]
-            val candidateSet : MutableSet<Int> = mutableSetOf()
-            val tileCoordSet : MutableList<MutableList<Int>> = mutableListOf()
-            for (tile in boxCoords) {
-                val tile_i = tile[0]
-                val tile_j = tile[1]
-                val i = 3 * box_i + tile_i
-                val j = 3 * box_j + tile_j
-                if (board.grid[i][j].tileNum == 0) {
-                    tileCoordSet.add(mutableListOf(i, j))
-                    for (k in board.grid[i][j].candidates) {
-                        candidateSet.add(k)
-                    }
-                }
-            }
-
-            if (candidateSet.size < 4) continue
-
-            // generate all 2 to k - 2 num combis and attempt to find groups of candidates
-            val combinations = generateAllCombinations(candidateSet)
-            for (combi in combinations) {
-                var tileInGroup = 0
-                val tileInGroupCoordList = mutableListOf<MutableList<Int>>()
-                val xcount = combi.size
-                for (coords in tileCoordSet) {
-                    val i = coords[0]
-                    val j = coords[1]
-                    var k = 1
-                    for (candidate in board.grid[i][j].candidates) {
-                        if (candidate in combi) {}
-                        else k = 0
-                    }
-                    if (k == 1) {
-                        tileInGroup++
-                        tileInGroupCoordList.add(mutableListOf(i, j))
-                    }
-                }
-                // once grouped, get em numby
-                // once grouped successfully, remove grouped candidates from tiles not in the group
-                if (tileInGroup == xcount) {
-                    for (tileCoord in tileCoordSet) {
-                        val i = tileCoord[0]
-                        val j = tileCoord[1]
-                        if (tileCoord in tileInGroupCoordList) {}
-                        else {
-                            for (m in combi) {
-                                if (board.grid[i][j].candidates.remove(m)) changes++
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         return changes
     }
 
-    /*
-        In-box candidate row/col elimination and vice-versa
-            e.g.
-            col     1      2       3
-            ----------------------------
-                (1, 2, 3)  X   (1, 2, 4)
-                     X     X   (1, 2, 3, 4)
-                (1, 2, 3)  X      X
-            -
-            all other candidates that are 4 will be removed in column 3
-     */
-    fun L4Elimination() : Int {
+    // L3 Utility Functions (Combinations)
+    private fun eliminateFromCandidateGroups(combinations : List<List<Int>> ,tileList : TileList) : Int {
         var changes = 0
-
-        // row check
-        for (i in 0..8) {
-            val candidateSet : MutableSet<Int> = mutableSetOf()
-            val tileCoordSet : MutableList<MutableList<Int>> = mutableListOf()
-            for (j in 0..8) {
-                if (board.grid[i][j].tileNum == 0) {
-                    tileCoordSet.add(mutableListOf(i, j))
-                    for (k in board.grid[i][j].candidates) {
-                        candidateSet.add(k)
-                    }
-                }
-            }
-            val boxElim = inSameBox(candidateSet, tileCoordSet)
-
-            if (boxElim.isEmpty()) continue
-            for (procedure in boxElim) {
-                var candidate = procedure[0]
-                var box_i = procedure[1]
-                var box_j = procedure[2]
-                for (boxCoord in boxCoords) {
-                    val ri = boxCoord[0]
-                    val rj = boxCoord[1]
-                    if (3 * box_i + ri == i) continue
-                    else {
-                        if (board.grid[3 * box_i + ri][3 * box_j + rj].candidates.remove(candidate)) changes++
-                    }
-                }
-            }
-        }
-
-        // col check
-        for (j in 0..8) {
-            val candidateSet : MutableSet<Int> = mutableSetOf()
-            val tileCoordSet : MutableList<MutableList<Int>> = mutableListOf()
-            for (i in 0..8) {
-                if (board.grid[i][j].tileNum == 0) {
-                    tileCoordSet.add(mutableListOf(i, j))
-                    for (k in board.grid[i][j].candidates) {
-                        candidateSet.add(k)
-                    }
-                }
-            }
-            val boxElim = inSameBox(candidateSet, tileCoordSet)
-
-            if (boxElim.isEmpty()) continue
-            for (procedure in boxElim) {
-                var candidate = procedure[0]
-                var box_i = procedure[1]
-                var box_j = procedure[2]
-                for (boxCoord in boxCoords) {
-                    val ri = boxCoord[0]
-                    val rj = boxCoord[1]
-                    if (3 * box_j + rj == j) continue
-                    else {
-                        if (board.grid[3 * box_i + ri][3 * box_j + rj].candidates.remove(candidate)) changes++
-                    }
-                }
-            }
-        }
-
-        // box check
-        for (boxCoord in boxCoords) {
-            // obtain set of all candidates and set of all tiles with candidates
-            val box_i = boxCoord[0]
-            val box_j = boxCoord[1]
-            val candidateSet: MutableSet<Int> = mutableSetOf()
-            val tileCoordSet: MutableList<MutableList<Int>> = mutableListOf()
-            for (tile in boxCoords) {
-                val tile_i = tile[0]
-                val tile_j = tile[1]
-                val i = 3 * box_i + tile_i
-                val j = 3 * box_j + tile_j
-                if (board.grid[i][j].tileNum == 0) {
-                    tileCoordSet.add(mutableListOf(i, j))
-                    for (k in board.grid[i][j].candidates) {
-                        candidateSet.add(k)
-                    }
-                }
+        for (combi in combinations) {
+            val tilesInGroup: TileList = mutableListOf()
+            val xcount = combi.size
+            for (tile in tileList) {
+                var k = 1
+                for (candidate in tile.candidates) if (candidate in combi == false) k = 0
+                if (k == 1) tilesInGroup.add(tile)
             }
 
-            val rowElim = inSameRow(candidateSet, tileCoordSet)
-            val colElim = inSameCol(candidateSet, tileCoordSet)
-
-            if (rowElim.isNotEmpty()) {
-                for (r in rowElim) {
-                    var candidate = r[0]
-                    var rowNum = r[1]
-                    for (j in 0..8) {
-                        if (j / 3 == box_j) continue
-                        else {
-                            if (board.grid[rowNum][j].candidates.remove(candidate)) changes++
-                        }
-                    }
-                }
-            }
-
-            if (colElim.isNotEmpty()) {
-                for (r in colElim) {
-                    var candidate = r[0]
-                    var colNum = r[1]
-                    for (i in 0..8) {
-                        if (i / 3 == box_i) continue
-                        else {
-                            if (board.grid[i][colNum].candidates.remove(candidate)) changes++
+            if (tilesInGroup.size == xcount) {
+                for (tile in tileList) {
+                    if (tile in tilesInGroup == false) {
+                        for (m in combi) {
+                            if (tile.candidates.remove(m)) changes++
                         }
                     }
                 }
             }
         }
-
         return changes
     }
 
-    // Utility Functions
-    /*
-        TODO: understand this haha, just found this on the internet
-     */
-    fun generateAllCombinations(candidateSet : IntSet) : List<List<Int>> {
+    private fun generateAllCombinations(candidateSet : IntSet) : List<List<Int>> {
         val candidateList = candidateSet.toList()
         val k = candidateList.size
 
@@ -495,7 +385,7 @@ class Solver(var board : Board) {
         return result
     }
 
-    fun generateCombinations(candidateList : List<Int>, size : Int) : List<List<Int>> {
+    private fun generateCombinations(candidateList : List<Int>, size : Int) : List<List<Int>> {
         if (size == 0) return listOf(emptyList())
         if (candidateList.isEmpty()) return emptyList()
 
@@ -508,22 +398,18 @@ class Solver(var board : Board) {
         return withFirst + withoutFirst
     }
 
-    /*
-        TODO: L4
-     */
-    fun inSameRow(candidateSet : IntSet, tileCoordSet : IntList2D) : IntList2D {
+    // L4 Utility Functions (Pointer Pairs/Trios)
+    private fun inSameRow(candidateSet : IntSet, tileList : TileList) : IntList2D {
         val candidateList = candidateSet.toMutableList()
         val sameRowNums : IntList2D = mutableListOf()
 
         for (c in candidateList) {
             val rowSet = mutableSetOf<Int>()
             var rowNum = -1
-            for (tileCoord in tileCoordSet) {
-                val i = tileCoord[0]
-                val j = tileCoord[1]
-                if (c in board.grid[i][j].candidates) {
-                    rowSet.add(i)
-                    rowNum = i
+            for (tile in tileList) {
+                if (c in tile.candidates) {
+                    rowSet.add(tile.i)
+                    rowNum = tile.i
                 }
                 if (rowSet.size >= 2) break
             }
@@ -532,40 +418,36 @@ class Solver(var board : Board) {
         return sameRowNums
     }
 
-    fun inSameCol(candidateSet : IntSet, tileCoordSet : IntList2D) : IntList2D {
+    private fun inSameCol(candidateSet : IntSet, tileList : TileList) : IntList2D {
         val candidateList = candidateSet.toMutableList()
-        val sameColNums : IntList2D = mutableListOf()
+        val sameRowNums : IntList2D = mutableListOf()
 
         for (c in candidateList) {
-            val colSet = mutableSetOf<Int>()
-            var colNum = -1
-            for (tileCoord in tileCoordSet) {
-                val i = tileCoord[0]
-                val j = tileCoord[1]
-                if (c in board.grid[i][j].candidates) {
-                    colSet.add(j)
-                    colNum = j
+            val rowSet = mutableSetOf<Int>()
+            var rowNum = -1
+            for (tile in tileList) {
+                if (c in tile.candidates) {
+                    rowSet.add(tile.j)
+                    rowNum = tile.j
                 }
-                if (colSet.size >= 2) break
+                if (rowSet.size >= 2) break
             }
-            if (colSet.size == 1) sameColNums.add(arrayOf(c, colNum).toMutableList())
+            if (rowSet.size == 1) sameRowNums.add(arrayOf(c, rowNum).toMutableList())
         }
-        return sameColNums
+        return sameRowNums
     }
 
-    fun inSameBox(candidateSet : IntSet, tileCoordSet : IntList2D) : IntList2D {
+    private fun inSameBox(candidateSet : IntSet, tileList : TileList) : IntList2D {
         val candidateList = candidateSet.toMutableList()
         val sameBoxNums : IntList2D = mutableListOf()
 
         for (c in candidateList) {
             val boxSet : IntList2D = mutableListOf()
             var boxCoord : IntList = mutableListOf()
-            for (tileCoord in tileCoordSet) {
-                val i = tileCoord[0]
-                val j = tileCoord[1]
-                if (c in board.grid[i][j].candidates) {
-                    boxSet.coordAdd(arrayOf(i / 3, j / 3).toMutableList())
-                    boxCoord = intArrayOf(i / 3, j / 3).toMutableList()
+            for (tile in tileList) {
+                if (c in board.grid[tile.i][tile.j].candidates) {
+                    boxSet.coordAdd(arrayOf(tile.i / 3, tile.j / 3).toMutableList())
+                    boxCoord = intArrayOf(tile.i / 3, tile.j / 3).toMutableList()
                 }
                 if (boxSet.size >= 2) break
             }
@@ -574,17 +456,14 @@ class Solver(var board : Board) {
         return sameBoxNums
     }
 
-    fun IntList2D.coordAdd(coord : IntList) {
+    private fun IntList2D.coordAdd(coord : IntList) {
         if (this.isEmpty()) {
             this.add(coord)
             return
         }
         for (c in this) {
-            val i = c[0]
-            var j = c[1]
-            if (i == coord[0] && j == coord[1]) {
-                return
-            }
+            val i = c[0]; val j = c[1]
+            if (i == coord[0] && j == coord[1]) return
         }
         this.add(coord)
     }
