@@ -251,8 +251,45 @@ class Solver(var board : Board) {
         TODO: L5: Swordfish and Y-Fish
      */
     fun l5Elimination(): Int {
+        var changes = 0
 
-        return 0
+        // Swordfish, Row Check first. Return { { col removed : row saved } }
+        for (c in 1..9) {
+            val colElims = rowCheckColumnElimSwordfish(c)
+            if (colElims.isEmpty()) continue
+            for (columns in colElims.keys) {
+                val rows = colElims[columns]
+                for (j in columns) {
+                    for (i in 0..8) {
+                        if (rows != null) {
+                            if (i in rows) continue
+                            if (board.grid[i][j].candidates.remove(c)) changes++
+                        } else continue
+                    }
+                }
+            }
+        }
+
+        // Swordfish, Col Check first
+        for (c in 1..9) {
+            val rowElims = colCheckRowElimSwordfish(c)
+            if (rowElims.isEmpty()) continue
+            for (rows in rowElims.keys) {
+                val columns = rowElims[rows]
+                for (i in rows) {
+                    for (j in 0..8) {
+                        if (columns != null) {
+                            if (j in columns) continue
+                            if (board.grid[i][j].candidates.remove(c)) changes++
+                        } else continue
+                    }
+                }
+            }
+        }
+
+
+
+        return changes
     }
 
     // OPERATIONS
@@ -330,6 +367,32 @@ class Solver(var board : Board) {
         return candidateSet
     }
 
+    private fun generateAllCombinations(candidateSet : IntSet) : List<List<Int>> {
+        val candidateList = candidateSet.toList()
+        val k = candidateList.size
+
+        val result = mutableListOf<List<Int>>()
+
+        for (size in 2..(k - 2)) {
+            result.addAll(generateCombinations(candidateList, size))
+        }
+
+        return result
+    }
+
+    private fun generateCombinations(candidateList : List<Int>, size : Int) : List<List<Int>> {
+        if (size == 0) return listOf(emptyList())
+        if (candidateList.isEmpty()) return emptyList()
+
+        val first = candidateList.first()
+        val rest = candidateList.drop(1)
+
+        val withFirst = generateCombinations(rest, size - 1).map { listOf(first) + it }
+        val withoutFirst = generateCombinations(rest, size)
+
+        return withFirst + withoutFirst
+    }
+
     // L2 Utility Functions (Isolated Candidates)
     private fun fillIsolatedCandidates(candidateMap : MutableMap<Int, Int>, tileList : TileList) : Int {
         var changes = 0
@@ -372,33 +435,7 @@ class Solver(var board : Board) {
         return changes
     }
 
-    private fun generateAllCombinations(candidateSet : IntSet) : List<List<Int>> {
-        val candidateList = candidateSet.toList()
-        val k = candidateList.size
-
-        val result = mutableListOf<List<Int>>()
-
-        for (size in 2..(k - 2)) {
-            result.addAll(generateCombinations(candidateList, size))
-        }
-
-        return result
-    }
-
-    private fun generateCombinations(candidateList : List<Int>, size : Int) : List<List<Int>> {
-        if (size == 0) return listOf(emptyList())
-        if (candidateList.isEmpty()) return emptyList()
-
-        val first = candidateList.first()
-        val rest = candidateList.drop(1)
-
-        val withFirst = generateCombinations(rest, size - 1).map { listOf(first) + it }
-        val withoutFirst = generateCombinations(rest, size)
-
-        return withFirst + withoutFirst
-    }
-
-    // L4 Utility Functions (Pointer Pairs/Trios)
+    // L4 Utility Functions (Pointer Pairs/Triples)
     private fun inSameRow(candidateSet : IntSet, tileList : TileList) : IntList2D {
         val candidateList = candidateSet.toMutableList()
         val sameRowNums : IntList2D = mutableListOf()
@@ -466,5 +503,107 @@ class Solver(var board : Board) {
             if (i == coord[0] && j == coord[1]) return
         }
         this.add(coord)
+    }
+
+    // L5 Utility Functions (Swordfish / Y-Wing)
+    // returns row and cols to be saved/elim-ed for each candidate, columns first
+    private fun rowCheckColumnElimSwordfish(c : Int) : MutableMap<IntList, IntList> {
+
+        // return val: columns to be removed, rows to be saved
+        val colElimsRowSaved : MutableMap<IntList, IntList> = mutableMapOf()
+
+        // 1.) Create Mapping of Each Row : Columns containing candidate x
+        val rowColsWithCandidateMap : MutableMap<Int, IntList> = mutableMapOf()
+
+        // Creation of Mapping
+        for (i in 0..8) {
+            // for each row, take note of each column containing candidate c
+            val colsWithCandidate : IntList = mutableListOf()
+            for (j in 0..8)  if (c in board.grid[i][j].candidates) colsWithCandidate.add(j)
+            if (colsWithCandidate.size >= 2) rowColsWithCandidateMap[i] = colsWithCandidate
+        }
+
+        // 2.) Generate all possible column combinations from the union of columns in the mapping
+        val columnSet : IntSet = mutableSetOf()
+        if (rowColsWithCandidateMap.size <= 1) return mutableMapOf()
+
+        // Creation of all possible column combinations
+        for (i in rowColsWithCandidateMap.keys) {
+            for (j in rowColsWithCandidateMap[i]!!) columnSet.add(j)
+        }
+        if (columnSet.size < 4) return mutableMapOf()
+        val allColumnCombinations = generateAllCombinations(columnSet)
+
+
+        // 3.) For each column combination with k elements (2 <= x <= k - 2), check how many
+        // key rows in the mapping are a subset of the column combination.
+        for (columnCombi in allColumnCombinations) {
+            val rowsWithCombi : IntList = mutableListOf()
+            val combiSize = columnCombi.size
+            for (i in rowColsWithCandidateMap.keys) {
+                var k = 1
+                val colList = rowColsWithCandidateMap[i]
+                if (colList != null) {
+                    for (candidate in colList) if (candidate !in columnCombi) k = 0
+                } else k = 0
+                if (k == 1) rowsWithCombi.add(i)
+            }
+            if (combiSize == rowsWithCombi.size) {
+                colElimsRowSaved[columnCombi.toMutableList()] = rowsWithCombi
+            }
+        }
+
+        return colElimsRowSaved
+    }
+
+    // TODO: edit naming conventions of both swordfish
+
+    private fun colCheckRowElimSwordfish(c : Int) : MutableMap<IntList, IntList> {
+
+        // return val: rows removed, columns saved
+        val rowElimsColsSaved: MutableMap<IntList, IntList> = mutableMapOf()
+
+        // 1.) Create Mapping of Each Column : Rows containing candidate x
+        val colRowsWithCandidateMap: MutableMap<Int, IntList> = mutableMapOf()
+
+        // Creation of Mapping
+        for (j in 0..8) {
+            // for each column, take note of each row containing candidate c
+            val rowsWithCandidate: IntList = mutableListOf()
+            for (i in 0..8) if (c in board.grid[i][j].candidates) rowsWithCandidate.add(i)
+            if (rowsWithCandidate.size >= 2) colRowsWithCandidateMap[j] = rowsWithCandidate
+        }
+
+        // 2.) Generate all possible row combinations from the union of columns in the mapping
+        val rowSet: IntSet = mutableSetOf()
+        if (colRowsWithCandidateMap.size <= 1) return mutableMapOf()
+
+        // Creation of all possible row combinations
+        for (j in colRowsWithCandidateMap.keys) {
+            for (i in colRowsWithCandidateMap[j]!!) rowSet.add(i)
+        }
+        if (rowSet.size < 4) return mutableMapOf()
+        val allRowCombinations = generateAllCombinations(rowSet)
+
+
+        // 3.) For each row combination with k elements (2 <= x <= k - 2), check how many
+        // key columns in the mapping are a subset of the column combination.
+        for (rowCombi in allRowCombinations) {
+            val colsWithCombi: IntList = mutableListOf()
+            val combiSize = rowCombi.size
+            for (j in colRowsWithCandidateMap.keys) {
+                var k = 1
+                val colList = colRowsWithCandidateMap[j]
+                if (colList != null) {
+                    for (candidate in colList) if (candidate !in rowCombi) k = 0
+                } else k = 0
+                if (k == 1) colsWithCombi.add(j)
+            }
+            if (combiSize == colsWithCombi.size) {
+                rowElimsColsSaved[rowCombi.toMutableList()] = colsWithCombi
+            }
+        }
+
+        return rowElimsColsSaved
     }
 }

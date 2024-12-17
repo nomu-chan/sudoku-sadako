@@ -275,5 +275,91 @@ class Board {
 
         // repeated iteration tracking
         var noChangesInBoard = 0; var changes = 0
+
+        solve.candidateFill()
+        printGridCandidates() // test
+        println("--") // test
+        println("loop starts")
+        println("--")
+
+        while(end == 0 && noChangesInBoard != 1) {
+            changes = 0
+            changes += solve.checkIsolatedCandidates()
+            println("Changes0 (L2): $changes")
+
+            if (changes == 0) {
+                changes += solve.checkGroupedCandidates()
+                changes += solve.checkIsolatedCandidates()
+                println("Changes1 (L3+2): $changes")
+                if (changes == 0) {
+                    changes += solve.l5Elimination()
+                    println("Changes2 (L5/5): $changes")
+                    changes += solve.l4Elimination()
+                    println("Changes3 (L4/5): $changes") // test
+                    changes += solve.checkGroupedCandidates()
+                    println("Changes4 (L3/5): $changes")
+                    changes += solve.checkIsolatedCandidates()
+                    println("Changes5 (L2/5): $changes")
+                    changes += solve.checkSingleCandidates()
+                    println("Changes6 (L1/5): $changes")
+                }
+                if (changes == 0) noChangesInBoard++
+            }
+
+            printGridCandidates() // test
+            println("--") // test
+
+            isGridCompleted()
+        }
+
+        val mark2 = timeSource.markNow()
+        val elapsed = mark2 - mark1
+        println("$elapsed")
+        when {
+            end == 1 -> println("complete")
+            end == -1 -> println("error")
+            else -> println("incomplete")
+        }
+    }
+
+    fun pureSwordfish() {
+        val solve = Solver(this)
+
+        // time tracking
+        val timeSource = TimeSource.Monotonic; val mark1 = timeSource.markNow()
+
+        // repeated iteration tracking
+        var noChangesInBoard = 0; var changes = 0
+
+        solve.candidateFill()
+        printGridCandidates() // test
+        println("--") // test
+        println("loop starts")
+        println("--")
+
+        while(end == 0 && noChangesInBoard != 1) {
+            changes = 0
+            changes += solve.l5Elimination()
+            println("Changes0 (L5): $changes")
+
+            if (changes == 0) noChangesInBoard++
+            printGridCandidates() // test
+            println("--") // test
+
+            isGridCompleted()
+        }
+
+        val mark2 = timeSource.markNow()
+        val elapsed = mark2 - mark1
+        println("$elapsed")
+        when {
+            end == 1 -> println("complete")
+            end == -1 -> println("error")
+            else -> println("incomplete")
+        }
+    }
+
+    fun pureYWing() {
+
     }
 }

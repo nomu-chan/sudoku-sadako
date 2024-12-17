@@ -1,0 +1,36 @@
+ROW CHECK COLUMN ELIMINATION SWORDFISH
+
+x -> all tiles with candidate x, say 4
+
+col
+0 1 2 3 4 5
+                ROW TO COLUMN MAPPING
+x x 3 8 x x |   0: (0, 1, 4, 5)
+x x 8 7 x x |   1: (0, 1, 4, 5)
+1 X 0 3 X 5 |   2: (1, 4)
+0 0 0 2 0 0 |
+8 X 1 9 X 6 |   4: (1, 4)
+0 x 0 5 x x |   5: (1, 4, 5)
+
+1.) Create Mapping of Rows to Columns containing candidate x
+
+2.) Generate all possible column combinations from the union of columns in the mapping
+
+3.) For each column combination with k elements (2 <= x <= k - 2), check how many key rows in the mapping
+    are a subset of the column combination.
+
+4.) If it's equal (rows = k), then save the rows and columns involved.
+    In the example above, candidate x should give {{1, 4} : (2, 4}} (cols removed, rows saved)
+    -> For all columns 1, 4. remove every candidate x except those in rows (2, 4)
+
+
+For COL CHECK ROW ELIM
+
+1.) Create Mapping of Columns to Rows containing candidate x
+
+2.) Generate all possible column combinations from the union of rows in the mapping
+
+3.) For each row combination with k elements (2 <= x <= k - 2), check how many key columns in the mapping
+    are a subset of the row combination.
+
+4.) If it's equal (columns = k), then save the rows and columns involved.
